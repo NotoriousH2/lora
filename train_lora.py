@@ -355,6 +355,14 @@ def load_training_data_from_hub(dataset_ids: list[str], tokenizer, seed: int = 4
         try:
             ds = load_dataset(dataset_id, split="train")
             print(f"✅ {dataset_id}: {len(ds)}개 샘플 로드")
+            
+            # 각 데이터셋을 먼저 text로 변환 (스키마 통일)
+            ds = convert_dataset_to_text(ds, tokenizer)
+            
+            # text 필드만 유지 (스키마 차이 문제 해결)
+            if "text" in ds.column_names:
+                ds = ds.select_columns(["text"])
+            
             all_datasets.append(ds)
         except Exception as e:
             print(f"❌ {dataset_id} 로드 실패: {e}")
@@ -362,16 +370,13 @@ def load_training_data_from_hub(dataset_ids: list[str], tokenizer, seed: int = 4
     if not all_datasets:
         raise ValueError("로드된 데이터셋이 없습니다!")
     
-    # 데이터셋 병합
+    # 데이터셋 병합 (모두 {"text": ...} 형식으로 통일됨)
     if len(all_datasets) == 1:
         combined_dataset = all_datasets[0]
     else:
         combined_dataset = concatenate_datasets(all_datasets)
     
     print(f"\n📊 총 데이터 수: {len(combined_dataset)}개")
-    
-    # messages + tools → text 변환 (필요한 경우)
-    combined_dataset = convert_dataset_to_text(combined_dataset, tokenizer)
     
     # 셔플 및 분할
     combined_dataset = combined_dataset.shuffle(seed=seed)

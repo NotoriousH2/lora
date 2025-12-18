@@ -17,7 +17,7 @@ torchaudio==2.7.1
 unsloth[cu128-torch271] @ git+https://github.com/unslothai/unsloth.git
 
 # Flash Attention 2.8.3 - CUDA 12 + Python 3.12
-https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.9cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
 
 # ============================================================
 # HuggingFace & Training

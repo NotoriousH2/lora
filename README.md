@@ -47,10 +47,20 @@ Use the function 'get_weather' to '날씨 조회'
 
 ### 1. 환경 설정
 
+⚠️ **설치 순서가 중요합니다!** Unsloth는 반드시 마지막에 설치해야 합니다.
+
 ```bash
-# 의존성 설치
+# Step 1: 기본 패키지 설치
 pip install -r requirements_lora.txt
+
+# Step 2: Unsloth 설치 (반드시 마지막에!)
+pip install "unsloth[cu128-torch271] @ git+https://github.com/unslothai/unsloth.git"
+
+# Step 3: Flash Attention 설치 (선택, 성능 향상)
+pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.9cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
 ```
+
+> **Note**: Unsloth는 transformers, torch 등을 monkey-patch하므로 다른 패키지 설치 후에 설치해야 합니다.
 
 ### 2. 학습 실행
 

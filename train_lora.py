@@ -23,6 +23,12 @@ Kanana Tool Calling LoRA Training Script
     로컬 파일을 사용하려면 --local_data 플래그를 추가하세요.
 """
 
+# ============================================================
+# ⚠️ Unsloth는 반드시 다른 패키지보다 먼저 import해야 합니다!
+# (Unsloth가 transformers, torch 등을 monkey-patch하기 때문)
+# ============================================================
+from unsloth import FastLanguageModel
+
 import argparse
 import json
 import os
@@ -35,7 +41,6 @@ import torch
 from datasets import Dataset, load_dataset, concatenate_datasets
 from transformers import TrainerCallback
 from trl import SFTTrainer, SFTConfig
-from unsloth import FastLanguageModel
 
 
 # ============================================================

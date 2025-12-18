@@ -122,31 +122,76 @@ def format_tools_for_system_prompt(tools: list) -> str:
     return "\n\n".join(tools_descriptions)
 
 
-def convert_messages_tools_to_text(messages: list, tools: list, tokenizer) -> str:
+def parse_tools(tools) -> list:
+    """
+    다양한 형식의 tools를 표준 리스트로 변환
+    
+    지원 형식:
+    - ["{json1}", "{json2}"] - 문자열 리스트
+    - "[{json1}, {json2}]" - 전체가 하나의 JSON 문자열
+    - [{"name": ...}, ...] - 이미 파싱된 dict 리스트
+    - None 또는 빈 값
+    """
+    if not tools:
+        return []
+    
+    # 문자열인 경우 (전체 배열이 JSON 문자열로 인코딩된 경우)
+    if isinstance(tools, str):
+        try:
+            parsed = json.loads(tools)
+            if isinstance(parsed, list):
+                return parsed
+            return [parsed]
+        except json.JSONDecodeError:
+            return []
+    
+    # 리스트인 경우
+    if isinstance(tools, list):
+        return tools
+    
+    return []
+
+
+def convert_messages_tools_to_text(messages: list, tools, tokenizer) -> str:
     """
     messages + tools 형식을 Llama 3 chat template text로 변환
     
     Args:
         messages: [{"role": "user/assistant/system", "content": "..."}]
-        tools: ["{json string}", ...] 또는 [{"name": ..., "description": ...}, ...]
+        tools: 다양한 형식 지원 (리스트, JSON 문자열 등)
         tokenizer: 토크나이저 (chat_template 적용용)
     
     Returns:
         Llama 3 포맷의 text 문자열
     """
+    # tools를 표준 형식으로 파싱
+    parsed_tools = parse_tools(tools)
+    
     # tools가 있으면 시스템 프롬프트 생성
     formatted_messages = []
     
-    if tools:
-        tools_description = format_tools_for_system_prompt(tools)
+    if parsed_tools:
+        tools_description = format_tools_for_system_prompt(parsed_tools)
         if tools_description:
             system_content = TOOL_SYSTEM_PROMPT_TEMPLATE.format(tools_description=tools_description)
             formatted_messages.append({"role": "system", "content": system_content})
     
     # 기존 messages 추가 (이미 system이 있으면 병합 고려)
     for msg in messages:
+        # msg가 dict가 아니면 스킵
+        if not isinstance(msg, dict):
+            continue
+            
         role = msg.get("role", "")
         content = msg.get("content", "")
+        
+        # role이 없거나 content가 없으면 스킵
+        if not role:
+            continue
+        
+        # tool role은 ipython으로 변환 (Llama 3 형식)
+        if role == "tool":
+            role = "ipython"
         
         # 기존 system message가 있으면 tools system과 병합
         if role == "system" and formatted_messages and formatted_messages[0]["role"] == "system":

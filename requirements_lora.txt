@@ -47,6 +47,6 @@ rich
 # ⚠️ 위의 모든 패키지 설치 후, 아래 명령어로 별도 설치하세요:
 #
 #   pip install "unsloth[cu128-torch271] @ git+https://github.com/unslothai/unsloth.git"
-#   pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.9cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+#   pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
 #
 # ============================================================

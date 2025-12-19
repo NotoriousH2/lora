@@ -15,10 +15,8 @@ Kanana Tool Calling LoRA Training Script
     python train_lora.py --rank 64
 
 데이터셋:
-    기본적으로 HuggingFace Hub에서 데이터를 로드합니다:
-    - NotoriousH2/instructkr-toolflow
-    - NotoriousH2/instructkr-when2call
-    - NotoriousH2/instructkr-apigen
+    기본적으로 HuggingFace Hub에서 통합 데이터셋을 로드합니다:
+    - NotoriousH2/instructkr-sft (toolflow + when2call + apigen 통합)
     
     로컬 파일을 사용하려면 --local_data 플래그를 추가하세요.
 """
@@ -38,7 +36,7 @@ from functools import partial
 
 import numpy as np
 import torch
-from datasets import Dataset, load_dataset, concatenate_datasets
+from datasets import Dataset, load_dataset
 from transformers import TrainerCallback
 from trl import SFTTrainer, SFTConfig
 
@@ -46,11 +44,7 @@ from trl import SFTTrainer, SFTConfig
 # ============================================================
 # HuggingFace Hub 데이터셋 ID
 # ============================================================
-HF_DATASETS = [
-    "NotoriousH2/instructkr-toolflow",
-    "NotoriousH2/instructkr-when2call", 
-    "NotoriousH2/instructkr-apigen",
-]
+HF_DATASET = "NotoriousH2/instructkr-sft"
 
 
 # ============================================================
@@ -127,6 +121,27 @@ def format_tools_for_system_prompt(tools: list) -> str:
     return "\n\n".join(tools_descriptions)
 
 
+def parse_messages(messages) -> list:
+    """
+    JSON 문자열로 저장된 messages를 리스트로 파싱
+    
+    지원 형식:
+    - "[{...}, {...}]" - JSON 문자열
+    - [{...}, {...}] - 이미 파싱된 리스트
+    - None 또는 빈 값
+    """
+    if not messages:
+        return []
+    if isinstance(messages, str):
+        try:
+            return json.loads(messages)
+        except json.JSONDecodeError:
+            return []
+    if isinstance(messages, list):
+        return messages
+    return []
+
+
 def parse_tools(tools) -> list:
     """
     다양한 형식의 tools를 표준 리스트로 변환
@@ -198,7 +213,15 @@ def convert_messages_tools_to_text(messages: list, tools, tokenizer) -> str:
         # Assistant 메시지에 tool_calls가 있으면 <function=...> 형식으로 변환
         if role == "assistant" and tool_calls:
             tool_call = tool_calls[0]  # 현재 단일 호출만 지원
-            func_info = tool_call.get("function", {})
+            
+            # tool_call이 None이거나 dict가 아니면 스킵
+            if tool_call is None or not isinstance(tool_call, dict):
+                continue
+            
+            func_info = tool_call.get("function") or {}
+            if not func_info or not isinstance(func_info, dict):
+                continue
+            
             func_name = func_info.get("name", "")
             func_args = func_info.get("arguments", "{}")
             
@@ -247,14 +270,19 @@ def convert_dataset_to_text(dataset, tokenizer):
     지원하는 형식:
     - {"text": "..."} - 이미 변환된 경우 그대로 사용
     - {"messages": [...], "tools": [...]} - 변환 필요
+    - {"messages": "JSON문자열", "tools": "JSON문자열"} - 통합 데이터셋 형식
     """
     def convert_example(example):
         # 이미 text 필드가 있으면 그대로 사용
         if "text" in example and example["text"]:
             return example
         
-        messages = example.get("messages", [])
-        tools = example.get("tools", [])
+        messages = example.get("messages") or []
+        tools = example.get("tools") or []
+        
+        # JSON 문자열인 경우 파싱 (통합 데이터셋 형식 지원)
+        messages = parse_messages(messages)
+        tools = parse_tools(tools)
         
         text = convert_messages_tools_to_text(messages, tools, tokenizer)
         return {"text": text}
@@ -413,43 +441,26 @@ def preprocess_function(examples, tokenizer, max_seq_length=9000):
 # ============================================================
 # 데이터 로드
 # ============================================================
-def load_training_data_from_hub(dataset_ids: list[str], tokenizer, seed: int = 42):
-    """HuggingFace Hub에서 데이터셋 로드 및 병합"""
-    all_datasets = []
+def load_training_data_from_hub(dataset_id: str, tokenizer, seed: int = 42):
+    """HuggingFace Hub에서 통합 데이터셋 로드"""
+    print(f"\n📥 HuggingFace Hub에서 데이터셋 로드 중: {dataset_id}")
     
-    print("\n📥 HuggingFace Hub에서 데이터셋 로드 중...")
+    ds = load_dataset(dataset_id, split="train")
+    print(f"✅ {len(ds)}개 샘플 로드")
     
-    for dataset_id in dataset_ids:
-        try:
-            ds = load_dataset(dataset_id, split="train")
-            print(f"✅ {dataset_id}: {len(ds)}개 샘플 로드")
-            
-            # 각 데이터셋을 먼저 text로 변환 (스키마 통일)
-            ds = convert_dataset_to_text(ds, tokenizer)
-            
-            # text 필드만 유지 (스키마 차이 문제 해결)
-            if "text" in ds.column_names:
-                ds = ds.select_columns(["text"])
-            
-            all_datasets.append(ds)
-        except Exception as e:
-            print(f"❌ {dataset_id} 로드 실패: {e}")
+    # messages + tools → text 변환
+    ds = convert_dataset_to_text(ds, tokenizer)
     
-    if not all_datasets:
-        raise ValueError("로드된 데이터셋이 없습니다!")
+    # text 필드만 유지
+    if "text" in ds.column_names:
+        ds = ds.select_columns(["text"])
     
-    # 데이터셋 병합 (모두 {"text": ...} 형식으로 통일됨)
-    if len(all_datasets) == 1:
-        combined_dataset = all_datasets[0]
-    else:
-        combined_dataset = concatenate_datasets(all_datasets)
-    
-    print(f"\n📊 총 데이터 수: {len(combined_dataset)}개")
+    print(f"\n📊 총 데이터 수: {len(ds)}개")
     
     # 셔플 및 분할
-    combined_dataset = combined_dataset.shuffle(seed=seed)
+    ds = ds.shuffle(seed=seed)
+    split = ds.train_test_split(test_size=0.1, seed=seed)
     
-    split = combined_dataset.train_test_split(test_size=0.1, seed=seed)
     train_dataset = split['train']
     valid_dataset = split['test']
     
@@ -550,7 +561,7 @@ def train(args):
         'seed': args.seed,
         'experiment_name': experiment_name,
         'data_source': 'local' if args.local_data else 'huggingface_hub',
-        'datasets': args.data_files if args.local_data else args.hf_datasets,
+        'dataset': args.data_files if args.local_data else args.hf_dataset,
         'start_time': datetime.now().isoformat()
     }
     
@@ -602,7 +613,7 @@ def train(args):
     else:
         # HuggingFace Hub에서 로드 (messages + tools → text 변환 포함)
         raw_train_dataset, raw_valid_dataset = load_training_data_from_hub(
-            args.hf_datasets, tokenizer, args.seed
+            args.hf_dataset, tokenizer, args.seed
         )
     
     preprocess_fn = partial(
@@ -763,13 +774,9 @@ def main():
         help="로컬 파일에서 데이터 로드 (기본: HuggingFace Hub에서 로드)"
     )
     parser.add_argument(
-        "--hf_datasets", nargs="+",
-        default=[
-            "NotoriousH2/instructkr-toolflow",
-            "NotoriousH2/instructkr-when2call",
-            "NotoriousH2/instructkr-apigen"
-        ],
-        help="HuggingFace Hub 데이터셋 ID들"
+        "--hf_dataset", type=str,
+        default="NotoriousH2/instructkr-sft",
+        help="HuggingFace Hub 통합 데이터셋 ID"
     )
     parser.add_argument(
         "--data_files", nargs="+",

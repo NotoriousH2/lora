@@ -162,7 +162,7 @@ def convert_messages_tools_to_text(messages: list, tools, tokenizer) -> str:
     messages + tools 형식을 Llama 3 chat template text로 변환
     
     Args:
-        messages: [{"role": "user/assistant/system", "content": "..."}]
+        messages: [{"role": "user/assistant/system", "content": "...", "tool_calls": [...]}]
         tools: 다양한 형식 지원 (리스트, JSON 문자열 등)
         tokenizer: 토크나이저 (chat_template 적용용)
     
@@ -188,10 +188,28 @@ def convert_messages_tools_to_text(messages: list, tools, tokenizer) -> str:
             continue
             
         role = msg.get("role", "")
-        content = msg.get("content", "")
+        content = msg.get("content", "") or ""  # None인 경우 빈 문자열로
+        tool_calls = msg.get("tool_calls", [])
         
-        # role이 없거나 content가 없으면 스킵
+        # role이 없으면 스킵
         if not role:
+            continue
+        
+        # Assistant 메시지에 tool_calls가 있으면 <function=...> 형식으로 변환
+        if role == "assistant" and tool_calls:
+            tool_call = tool_calls[0]  # 현재 단일 호출만 지원
+            func_info = tool_call.get("function", {})
+            func_name = func_info.get("name", "")
+            func_args = func_info.get("arguments", "{}")
+            
+            # arguments가 dict인 경우 JSON 문자열로 변환
+            if isinstance(func_args, dict):
+                func_args = json.dumps(func_args, ensure_ascii=False)
+            
+            content = f"<function={func_name}>{func_args}</function>"
+        
+        # content가 없고 tool_calls도 없으면 스킵
+        if not content and not tool_calls:
             continue
         
         # tool role은 ipython으로 변환 (Llama 3 형식)

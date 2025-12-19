@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Tool Calling LoRA 모델 평가 스크립트
+Tool Calling 베이스 모델 평가 스크립트
 
-학습된 LoRA 모델의 Tool Calling 성능을 평가합니다.
+LoRA 학습 전의 베이스 모델 Tool Calling 성능을 평가합니다.
 
 평가 지표:
 - Tool Selection Accuracy: 올바른 Tool을 선택했는지
@@ -11,8 +11,9 @@ Tool Calling LoRA 모델 평가 스크립트
 - JSON Parse Success: 생성된 응답이 유효한 JSON인지
 
 사용법:
-    python evaluate_lora.py --model_path experiments/final_model
-    python evaluate_lora.py --model_path experiments/final_model --num_samples 1000
+    python evaluate_base.py
+    python evaluate_base.py --num_samples 1000
+    python evaluate_base.py --base_model kakaocorp/kanana-nano-2.1b-instruct
 """
 
 # ============================================================
@@ -193,17 +194,6 @@ def calculate_metrics(results: list[dict]) -> dict:
 def extract_all_eval_samples(messages: list, tools, source: str = "") -> list[dict]:
     """
     대화에서 모든 assistant 턴을 평가 샘플로 추출 (멀티턴 Tool Calling 지원)
-    
-    Returns:
-        [{
-            "context": [...],  # 해당 assistant 이전까지의 대화
-            "gold_response": "...",  # 정답 응답
-            "gold_tool_call": {...} or None,  # 정답 Tool Call
-            "has_tool_call": bool,  # Tool Call 여부
-            "tools": [...],
-            "source": "...",
-            "turn_index": int  # 몇 번째 턴인지
-        }, ...]
     """
     if not messages:
         return []
@@ -493,38 +483,11 @@ def run_evaluation(
 
 
 # ============================================================
-# 모델 경로 자동 탐지
-# ============================================================
-def find_latest_model_path(base_dir: str = "experiments") -> str:
-    """experiments 폴더에서 가장 최신 모델 경로 찾기"""
-    if not os.path.exists(base_dir):
-        raise FileNotFoundError(f"디렉토리를 찾을 수 없습니다: {base_dir}")
-    
-    candidates = []
-    for name in os.listdir(base_dir):
-        full_path = os.path.join(base_dir, name, "final_model")
-        if os.path.isdir(full_path):
-            mtime = os.path.getmtime(full_path)
-            candidates.append((mtime, full_path))
-    
-    if not candidates:
-        raise FileNotFoundError(f"{base_dir}에서 final_model 폴더를 찾을 수 없습니다")
-    
-    candidates.sort(reverse=True)
-    latest_path = candidates[0][1]
-    
-    print(f"🔍 최신 모델 발견: {latest_path}")
-    return latest_path
-
-
-# ============================================================
 # 메인 함수
 # ============================================================
 def main():
-    parser = argparse.ArgumentParser(description="Tool Calling LoRA 모델 평가")
+    parser = argparse.ArgumentParser(description="Tool Calling 베이스 모델 평가")
     
-    parser.add_argument("--model_path", type=str, default=None,
-                        help="LoRA 어댑터 경로 (미지정시 experiments에서 최신 모델 자동 탐지)")
     parser.add_argument("--base_model", type=str, default="kakaocorp/kanana-nano-2.1b-instruct",
                         help="베이스 모델 ID")
     parser.add_argument("--num_samples", type=int, default=100, help="평가할 샘플 수")
@@ -536,27 +499,36 @@ def main():
     
     args = parser.parse_args()
     
-    # 모델 경로 결정
-    model_path = args.model_path if args.model_path else find_latest_model_path()
-    
     print("=" * 60)
-    print("🔬 Tool Calling LoRA 모델 평가")
+    print("🔬 Tool Calling 베이스 모델 평가")
     print("=" * 60)
-    print(f"모델 경로: {model_path}")
     print(f"베이스 모델: {args.base_model}")
     print(f"평가 샘플 수: {args.num_samples}")
     print(f"배치 크기: {args.batch_size}")
     print(f"최대 생성 토큰: {args.max_new_tokens}")
     print("=" * 60)
     
-    # 모델 로드
-    print("\n🚀 모델 로드 중...")
+    # 베이스 모델 로드
+    print("\n🚀 베이스 모델 로드 중...")
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_path,
+        model_name=args.base_model,
         max_seq_length=args.max_seq_length,
         dtype=None,
         load_in_4bit=True,
     )
+    
+    # Unsloth 최적화를 위해 dummy LoRA 어댑터 추가
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=8,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        lora_alpha=16,
+        lora_dropout=0,
+        bias="none",
+        use_gradient_checkpointing="unsloth",
+        random_state=42,
+    )
+    
     FastLanguageModel.for_inference(model)
     print("모델 로드 완료")
     
@@ -576,7 +548,7 @@ def main():
     
     # 결과 출력
     print("\n" + "=" * 60)
-    print("📊 평가 결과")
+    print("📊 베이스 모델 평가 결과")
     print("=" * 60)
     print(f"총 평가 샘플: {metrics.get('total_samples', 0)}")
     print(f"  - Tool Call 샘플: {metrics.get('tool_call_samples', 0)}")
@@ -596,12 +568,12 @@ def main():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     results_df = pd.DataFrame(results)
-    results_csv = os.path.join(args.output_dir, f"evaluation_results_{timestamp}.csv")
+    results_csv = os.path.join(args.output_dir, f"base_evaluation_results_{timestamp}.csv")
     results_df.to_csv(results_csv, index=False, encoding="utf-8-sig")
     print(f"\n💾 상세 결과 저장: {results_csv}")
     
     summary = {
-        "model_path": model_path,
+        "model_type": "base",
         "base_model": args.base_model,
         "num_samples": args.num_samples,
         "batch_size": args.batch_size,
@@ -609,12 +581,12 @@ def main():
         "timestamp": timestamp,
         "metrics": metrics
     }
-    summary_json = os.path.join(args.output_dir, f"evaluation_summary_{timestamp}.json")
+    summary_json = os.path.join(args.output_dir, f"base_evaluation_summary_{timestamp}.json")
     with open(summary_json, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
     print(f"💾 요약 저장: {summary_json}")
     
-    print("\n✅ 평가 완료!")
+    print("\n✅ 베이스 모델 평가 완료!")
 
 
 if __name__ == "__main__":
